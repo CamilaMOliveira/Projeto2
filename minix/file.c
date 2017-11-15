@@ -21,6 +21,13 @@
 #include <linux/string.h>
 
 ssize_t cipher_file_write_iter(struct kiocb *iocb, struct iov_iter *from);
+ssize_t cipher_file_read_iter(struct kiocb *iocb, struct iov_iter *iter);
+void encrypt(char *buf);
+void decrypt(char *buf);
+
+char *vetor[2];
+static char* key = "limao";
+#define AES_BLOCK_SIZE 16
 
 /*
  * We have mostly NULLs here: the current defaults are OK for
@@ -63,30 +70,119 @@ static int minix_setattr(struct dentry *dentry, struct iattr *attr)
 
 ssize_t cipher_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 {
-	ssize_t result, nbytes, in_size;
-	char *buffer = kmalloc (sizeof (char) * 256,GFP_KERNEL);
-	struct iovec *iov_page = NULL;
-	struct iovec *in_iov = NULL;
-	unsigned int in_iovs = 0;
+	ssize_t result;
+	char *buf = kmalloc (sizeof (char) * 256,GFP_KERNEL);
+	struct iov_iter copia;
+	int len;
+	buf = "encriptado"; //Estah com esse valor apenas para testar
 
-	/*iov_page = (struct iovec *) __get_free_page(GFP_KERNEL);
-	struct iovec *iov = iov_page;
+	printk("DADOS ================ %s ==========\n",from->iov->iov_base);//mostra os dados que o usuario escreveu. (antes de serem cifrados)
 
-	in_iov = iov;
-	in_iovs = 1;
+	printk("BUF =========== %s",buf); //printa "encriptado"
 
-	in_size = iov_length(in_iov, in_iovs);
 
-	iov_iter_init(from, WRITE, in_iov, in_iovs, in_size);*/
+	/* CHAMAR A FUNCAO DE ENCRIPTAR AQUI E ATUALIZAR BUF COM ELE
+	
+	dado_encriptado = encrypt(from->iov->iov_base);	
 
-	nbytes = copy_from_iter(buffer, 4, from);
+	buf = dado_encriptado;
 
-	result = generic_file_write_iter(iocb, from);
+	*/
 
-	printk("COPY TO BUFFER =========== %s ===========\n",buffer);
+	len = strlen(buf);
+	struct iovec iov = { .iov_base = (void __user *)buf, .iov_len = len }; //Coloca o dado encriptado (buf) e seu tamanho na iovec
+
+	iov_iter_init(&copia, WRITE, &iov, 1, len); //Inicializa a nova struct com os dados de iovec (que serao escritos no arquivo no lugar do dado original)
+
+	printk("COPIA =========== %s",copia.iov->iov_base); //printa o que serah escrito no arquivo -> Os dados cifrados
+
+	result = generic_file_write_iter(iocb, &copia); //escreve no arquivo os dados cifrados
+
+
 
 	return result;
 }
+
+/*ssize_t cipher_file_read_iter(struct kiocb *iocb, struct iov_iter *iter)
+{
+	ssize_t result;
+	char *buf = kmalloc (sizeof (char) * 256,GFP_KERNEL);
+
+	struct iov_iter struct_decifrada;
+        int len;
+
+	buf = "decifrado";
+
+	printk("--------------- PASSOU POR CIPHER READ ITERRRRRRRRRRRR \n");
+
+	result = generic_file_read_iter(iocb, iter);
+	printk("--------------- DADO LIDO ===> %s",iter->iov->iov_base);
+
+	len = strlen(buf);
+        struct iovec iov = { .iov_base = (void __user *)buf, .iov_len = len };
+
+        iov_iter_init(&struct_decifrada, WRITE, &iov, 1, len);
+
+        printk("DADO DECIFRADO =========== %s",struct_decifrada.iov->iov_base);
+
+        result = generic_file_write_iter(iocb, &struct_decifrada);
+
+	return result;
+} */
+
+void encrypt(char *buf)  
+{     
+    char *buf1 = kmalloc (sizeof (char) * 256,GFP_KERNEL);
+    char *buf2 = kmalloc (sizeof (char) * 256,GFP_KERNEL);
+
+
+    int w=0, j=0;
+    char* dest;
+ 
+    printk("buf: %s", buf);
+    dest= buf1;
+    struct crypto_cipher *tfm;  
+    int i,count,div=0,modd;  
+    div=strlen(buf)/AES_BLOCK_SIZE;  
+    modd=strlen(buf)%AES_BLOCK_SIZE; 
+    printk("MOD: %i", modd); 
+    if(modd>0)  
+        div++; 
+    printk("DIV: %i", div); 
+    count=div;  
+    tfm=crypto_alloc_cipher("aes", 0, 16); 
+    printk("POS CRYPTO");   
+    crypto_cipher_setkey(tfm,key,16);    
+    printk("CRYPTO CIPHER SETKEY");
+    for(i=0;i<count;i++)  
+    {  
+	printk("ENTROU FOR");
+        crypto_cipher_encrypt_one(tfm,dest,buf);
+        printk("vez FOR: %i", i);      
+        buf=buf+AES_BLOCK_SIZE;  
+    }
+    printk("POS FOR");
+    crypto_free_cipher(tfm); 
+
+    printk("Cifrado sem hexa: %s", dest); 
+
+    
+    for(w=0,j=0; w<strlen(dest); w++,j+=2)
+    {
+	sprintf((char *)buf2+j,"%02x",dest[w]);
+
+    }
+
+    buf2[j] = '\0';
+    
+    vetor[0] = dest;
+    vetor[1] = buf2;
+
+    printk("Teste vetor %s  %s ", vetor[0], vetor[1]);
+    printk("Cifrado em Hexa: %s", buf2);
+
+}
+
 
 const struct inode_operations minix_file_inode_operations = {
 	.setattr	= minix_setattr,
