@@ -6,6 +6,12 @@
  *  minix regular file handling primitives
  */
 
+#include <linux/moduleparam.h>
+#include <linux/kernel.h>
+#include <linux/init.h>
+#include <linux/stat.h>
+//#include <stdio.h>
+
 #include "minix.h"
 #include <linux/uio.h>
 #include <linux/init.h>           // Macros used to mark up functions e.g. __init __exit
@@ -21,13 +27,16 @@
 #include <linux/string.h>
 
 ssize_t cipher_file_write_iter(struct kiocb *iocb, struct iov_iter *from);
-ssize_t cipher_file_read_iter(struct kiocb *iocb, struct iov_iter *iter);
+ssize_t decipher_file_read_iter(struct kiocb *iocb, struct iov_iter *iter);
 void encrypt(char *buf);
 void decrypt(char *buf);
 
 char *vetor[2];
-static char* key = "limao";
+char *dest1;
+static char* key;
 #define AES_BLOCK_SIZE 16
+
+module_param(key, charp, 0000);
 
 /*
  * We have mostly NULLs here: the current defaults are OK for
@@ -35,12 +44,14 @@ static char* key = "limao";
  */
 const struct file_operations minix_file_operations = {
 	.llseek		= generic_file_llseek,
-	.read_iter	= generic_file_read_iter,
+	.read_iter	= decipher_file_read_iter, //generic_file_read_iter,
 	.write_iter	= cipher_file_write_iter, //generic_file_write_iter,
 	.mmap		= generic_file_mmap,
 	.fsync		= generic_file_fsync,
 	.splice_read	= generic_file_splice_read,
 };
+
+
 
 static int minix_setattr(struct dentry *dentry, struct iattr *attr)
 {
@@ -68,73 +79,64 @@ static int minix_setattr(struct dentry *dentry, struct iattr *attr)
 	return 0;
 }
 
+
 ssize_t cipher_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 {
-	ssize_t result;
-	char *buf = kmalloc (sizeof (char) * 256,GFP_KERNEL);
+	ssize_t result_cipher;
 	struct iov_iter copia;
 	int len;
-	buf = "encriptado"; //Estah com esse valor apenas para testar
 
 	printk("DADOS ================ %s ==========\n",from->iov->iov_base);//mostra os dados que o usuario escreveu. (antes de serem cifrados)
 
-	printk("BUF =========== %s",buf); //printa "encriptado"
+	printk("key -------------%s", key);
 
 
-	/* CHAMAR A FUNCAO DE ENCRIPTAR AQUI E ATUALIZAR BUF COM ELE
+	encrypt(from->iov->iov_base);
 	
-	dado_encriptado = encrypt(from->iov->iov_base);	
 
-	buf = dado_encriptado;
-
-	*/
-
-	len = strlen(buf);
-	struct iovec iov = { .iov_base = (void __user *)buf, .iov_len = len }; //Coloca o dado encriptado (buf) e seu tamanho na iovec
+	len = strlen(vetor[1]);
+	struct iovec iov = { .iov_base = (void __user *)vetor[1], .iov_len = len }; //Coloca o dado encriptado (buf) e seu tamanho na iovec
 
 	iov_iter_init(&copia, WRITE, &iov, 1, len); //Inicializa a nova struct com os dados de iovec (que serao escritos no arquivo no lugar do dado original)
 
 	printk("COPIA =========== %s",copia.iov->iov_base); //printa o que serah escrito no arquivo -> Os dados cifrados
 
-	result = generic_file_write_iter(iocb, &copia); //escreve no arquivo os dados cifrados
+	result_cipher = generic_file_write_iter(iocb, &copia); //escreve no arquivo os dados cifrados
 
 
-
-	return result;
+	return result_cipher;
 }
 
-/*ssize_t cipher_file_read_iter(struct kiocb *iocb, struct iov_iter *iter)
-{
-	ssize_t result;
-	char *buf = kmalloc (sizeof (char) * 256,GFP_KERNEL);
+ssize_t decipher_file_read_iter(struct kiocb *iocb, struct iov_iter *from) {
 
-	struct iov_iter struct_decifrada;
-        int len;
+	ssize_t result_decipher, result;
+	struct iov_iter copia_decipher;
+	int len_decipher;
 
-	buf = "decifrado";
+	result_decipher = generic_file_read_iter(iocb, from); //Le do arquivo os dados cifrados
 
-	printk("--------------- PASSOU POR CIPHER READ ITERRRRRRRRRRRR \n");
+	printk("@@@ DADO LIDO QUE SERAH DECIFRADO ============ %s \n",from->iov->iov_base);
 
-	result = generic_file_read_iter(iocb, iter);
-	printk("--------------- DADO LIDO ===> %s",iter->iov->iov_base);
+	printk("key---- decypher ------%s\n", key);
 
-	len = strlen(buf);
-        struct iovec iov = { .iov_base = (void __user *)buf, .iov_len = len };
+	decrypt(from->iov->iov_base);
 
-        iov_iter_init(&struct_decifrada, WRITE, &iov, 1, len);
+	printk("dados decifrados -------%s\n", dest1);
 
-        printk("DADO DECIFRADO =========== %s",struct_decifrada.iov->iov_base);
+	len_decipher = strlen(dest1);
 
-        result = generic_file_write_iter(iocb, &struct_decifrada);
+	memset(from->iov->iov_base, 0, strlen(from->iov->iov_base)); //Zera o campo que recebera o dado decifrado
 
-	return result;
-} */
+	memcpy(from->iov->iov_base,dest1,len_decipher);	//Substitui pelo dado decifrado
+
+	return result_decipher;
+}
+
 
 void encrypt(char *buf)  
 {     
     char *buf1 = kmalloc (sizeof (char) * 256,GFP_KERNEL);
     char *buf2 = kmalloc (sizeof (char) * 256,GFP_KERNEL);
-
 
     int w=0, j=0;
     char* dest;
@@ -181,6 +183,34 @@ void encrypt(char *buf)
     printk("Teste vetor %s  %s ", vetor[0], vetor[1]);
     printk("Cifrado em Hexa: %s", buf2);
 
+}
+
+void decrypt(char *buf)
+{
+	    char *buf1 = kmalloc (sizeof (char) * 256,GFP_KERNEL);
+
+	    dest1 = buf1;
+
+
+	    struct crypto_cipher *tfm;
+	    int i,count,div,modd;
+	    div=strlen(buf)/AES_BLOCK_SIZE;
+	    modd=strlen(buf)%AES_BLOCK_SIZE;
+	    if(modd>0)
+		div++;
+	    count=div;
+
+
+	    tfm=crypto_alloc_cipher("aes", 0, 16);
+	    crypto_cipher_setkey(tfm,key,16);
+	    for(i=0;i<count;i++)
+	    {
+		crypto_cipher_decrypt_one(tfm,dest1,vetor[0]);
+		buf=buf+AES_BLOCK_SIZE;
+	    }
+
+
+	    printk("Decifrado: %s", dest1);
 }
 
 
